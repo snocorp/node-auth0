@@ -62,20 +62,7 @@ class RetryRestClient {
   }
 
   invoke(method, args) {
-    let cb;
-    if (args && args[args.length - 1] instanceof Function) {
-      cb = args[args.length - 1];
-      args.pop(); // Remove the callback
-    }
-
-    const promise = this.handleRetry(method, args);
-
-    if (cb instanceof Function) {
-      promise.then(cb.bind(null, null)).catch(cb);
-      return;
-    }
-
-    return promise;
+    return this.handleRetry(method, args);
   }
 
   handleRetry(method, args) {
@@ -84,19 +71,41 @@ class RetryRestClient {
     }
 
     return new Promise((resolve, reject) => {
+      const cb =
+        args &&
+        args.length >= 1 &&
+        (args[args.length - 1] instanceof Function || typeof args[args.length - 1] === 'undefined')
+          ? args.pop() // Remove the argument
+          : undefined;
+
       const operation = retry.operation(this.retryOptions);
 
-      operation.attempt(() => {
-        this.restClient[method](...args)
-          .then((body) => {
-            resolve(body);
-          })
-          .catch((err) => {
-            if (err && err.statusCode === 429 && operation.retry(err)) {
-              return;
-            }
+      const callback = (err, body, headers) => {
+        if (err) {
+          if (err.statusCode === 429 && operation.retry(err)) {
+            return;
+          }
+
+          if (cb) {
+            cb(err);
+          } else {
             reject(err);
-          });
+          }
+          return;
+        }
+
+        if (cb) {
+          cb(null, body, headers);
+        } else {
+          resolve(body);
+        }
+      };
+
+      operation.attempt(() => {
+        if (method === 'get' && args.length === 0) {
+          args = [{}]; // add empty params if none were passed
+        }
+        this.restClient[method](...[...args, callback]);
       });
     });
   }

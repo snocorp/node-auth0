@@ -18,6 +18,15 @@ Promise.prototype.finally =
     );
   };
 
+function replaceCallback(args, fn) {
+  // the last arg is a callback and must be replaced
+  cb = args[args.length - 1];
+  args[args.length - 1] = (...args) => {
+    fn();
+    cb(...args);
+  };
+}
+
 describe('RetryRestClient', () => {
   let restClient;
   before(() => {
@@ -56,12 +65,14 @@ describe('RetryRestClient', () => {
   });
 
   it('should pass data to callback when provided', (done) => {
-    nock(API_URL).get('/').reply(200, { success: true });
+    nock(API_URL).get('/').reply(200, { success: true }, { key: 'value' });
 
     const client = new RetryRestClient(restClient);
-    client.getAll((err, data) => {
+    client.getAll((err, data, headers) => {
       expect(err).to.null;
       expect(data.success).to.be.true;
+      expect(headers).to.have.property('key');
+      expect(headers.key).to.equal('value');
       done();
     });
   });
@@ -102,7 +113,7 @@ describe('RetryRestClient', () => {
     const restClientSpy = {
       getAll(...args) {
         timesCalled += 1;
-        return restClient.getAll(args);
+        return restClient.getAll(...args);
       },
     };
 
@@ -120,9 +131,8 @@ describe('RetryRestClient', () => {
     const restClientSpy = {
       getAll(...args) {
         timesCalled += 1;
-        return restClient.getAll(...args).finally(() => {
-          clock.runAllAsync();
-        });
+        replaceCallback(args, () => clock.runAllAsync());
+        return restClient.getAll(...args);
       },
     };
 
@@ -146,9 +156,8 @@ describe('RetryRestClient', () => {
     const restClientSpy = {
       getAll(...args) {
         timesCalled += 1;
-        return restClient.getAll(...args).finally(() => {
-          clock.runAllAsync();
-        });
+        replaceCallback(args, () => clock.runAllAsync());
+        return restClient.getAll(...args);
       },
     };
 
@@ -185,9 +194,8 @@ describe('RetryRestClient', () => {
         const now = new Date().getTime();
         backoffs.push(now - prev);
         prev = now;
-        return restClient.getAll(...args).finally(() => {
-          clock.runAllAsync();
-        });
+        replaceCallback(args, () => clock.runAllAsync());
+        return restClient.getAll(...args);
       },
     };
 
@@ -236,31 +244,31 @@ describe('RetryRestClient', () => {
     }
   });
 
-  it('should remove callback from arguments object if data is passed', (done) => {
+  it('should still pass callback to arguments object if data is passed', (done) => {
     const restClientSpy = {
       create() {
-        expect(arguments.length).to.be.equal(1);
-        done();
-        return Promise.resolve();
+        expect(arguments.length).to.be.equal(2);
+        // invoke the callback
+        arguments[1](null, {});
       },
     };
 
     const client = new RetryRestClient(restClientSpy, { enabled: false });
-    client.create({ data: 'foobar' }, () => {});
+    client.create({ data: 'foobar' }, done);
   });
 
-  it('should remove callback from arguments object if urlParams and data is passed', (done) => {
+  it('should still pass callback to arguments object if urlParams and data is passed', (done) => {
     const restClientSpy = {
       create() {
-        expect(arguments.length).to.be.equal(2);
-        done();
-        return Promise.resolve();
+        expect(arguments.length).to.be.equal(3);
+        // invoke the callback
+        arguments[2](null, {});
       },
     };
 
     const client = new RetryRestClient(restClientSpy, { enabled: false });
     const data = { data: 'foobar' };
-    client.create('/:id', data, () => {});
+    client.create('/:id', data, done);
   });
 
   it('should not remove data object when no callback is passed', (done) => {
